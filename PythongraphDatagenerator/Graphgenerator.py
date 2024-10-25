@@ -106,7 +106,7 @@ def main():
     generator = PointBasedFunctionGenerator()
     
     # Load points from your JSON file
-    generator.load_points_from_json('function_points_logarithmic_1701.json')
+    generator.load_points_from_json('function_points_logarithmic_240001.json')
     
     # Generate and plot the function
     generator.generate_function()
