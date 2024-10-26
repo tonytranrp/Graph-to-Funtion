@@ -182,6 +182,7 @@ def main():
     viewer = ModernFunctionViewer()
     viewer.load_points_from_json('function_points_logarithmic_24001.json')
     viewer.generate_function()
+    viewer.create_interactive_plot()
 
 if __name__ == "__main__":
     main()
