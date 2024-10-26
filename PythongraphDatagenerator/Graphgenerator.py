@@ -1,129 +1,187 @@
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.interpolate import make_interp_spline, BSpline
+from scipy.interpolate import make_interp_spline
 import json
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import tkinter as tk
+from tkinter import ttk
+import webbrowser
+import tempfile
+import os
 
-class PointBasedFunctionGenerator:
+class ModernFunctionViewer:
     def __init__(self):
         self.points = None
         self.spline_function = None
+        self.x_range = None
+        self.y_range = None
+        self.critical_points = None
         
     def load_points_from_json(self, filename):
         """Load points from a JSON file"""
         with open(filename, 'r') as f:
             data = json.load(f)
             self.points = [(point['x'], point['y']) for point in data['points']]
+            self.x_range = data['x_range']
+            y_coords = [p[1] for p in self.points]
+            self.y_range = [min(y_coords), max(y_coords)]
             
     def generate_function(self):
-        """Generate a smooth function from points using B-spline interpolation"""
+        """Generate a smooth function from points"""
         if not self.points:
             raise ValueError("No points loaded")
             
-        # Separate x and y coordinates
         x_coords, y_coords = zip(*self.points)
         x_coords = np.array(x_coords)
         y_coords = np.array(y_coords)
         
-        # Create B-spline representation
-        # k=3 gives cubic spline, smoother curve
         self.spline_function = make_interp_spline(x_coords, y_coords, k=3)
+        self._find_critical_points()
         
-    def plot_function(self, show_points=True):
-        """Plot the generated function"""
-        if not self.spline_function:
-            raise ValueError("Generate function first")
-            
-        # Create a finer x array for smooth plotting
-        x_coords, y_coords = zip(*self.points)
-        x_new = np.linspace(min(x_coords), max(x_coords), 1000)
-        y_new = self.spline_function(x_new)
-        
-        plt.figure(figsize=(12, 8))
-        
-        # Plot the smooth curve
-        plt.plot(x_new, y_new, 'b-', label='Interpolated Function')
-        
-        # Optionally plot original points
-        if show_points:
-            plt.plot(x_coords, y_coords, 'r.', alpha=0.5, 
-                    markersize=4, label='Original Points')
-        
-        plt.grid(True)
-        plt.xlabel('x')
-        plt.ylabel('y')
-        plt.title('Reconstructed Function from Points')
-        plt.legend()
-        plt.show()
-        
-    def evaluate_at(self, x):
-        """Evaluate the function at a specific x value"""
-        if not self.spline_function:
-            raise ValueError("Generate function first")
-        return float(self.spline_function(x))
-    
-    def get_critical_points(self):
-        """Find approximate critical points"""
-        if not self.points:
-            return None
-            
+    def _find_critical_points(self):
+        """Find all critical points of the function"""
         x_coords, y_coords = zip(*self.points)
         
-        critical_points = {
+        self.critical_points = {
             'x_intercepts': [],
             'y_intercept': None,
-            'local_maxima': [],
-            'local_minima': []
+            'minimum': None,
+            'maximum': None
         }
         
-        # Find y-intercept (closest point to x=0)
-        closest_to_zero = min(self.points, key=lambda p: abs(p[0]))
-        critical_points['y_intercept'] = closest_to_zero[1]
-        
-        # Find x-intercepts (points where y is close to 0)
+        # Find intercepts and extrema
         for i in range(len(self.points)-1):
-            if self.points[i][1] * self.points[i+1][1] <= 0:
-                # Linear interpolation to find more precise x-intercept
-                x1, y1 = self.points[i]
-                x2, y2 = self.points[i+1]
-                x_intercept = x1 - y1 * (x2 - x1) / (y2 - y1)
-                critical_points['x_intercepts'].append(round(x_intercept, 6))
-        
-        # Find local maxima and minima
-        for i in range(1, len(self.points)-1):
-            prev_y = self.points[i-1][1]
-            curr_y = self.points[i][1]
-            next_y = self.points[i+1][1]
+            x1, y1 = self.points[i]
+            x2, y2 = self.points[i+1]
             
-            if prev_y < curr_y > next_y:
-                critical_points['local_maxima'].append(self.points[i])
-            elif prev_y > curr_y < next_y:
-                critical_points['local_minima'].append(self.points[i])
+            # X-intercepts
+            if y1 * y2 <= 0:
+                x_intercept = x1 - y1 * (x2 - x1) / (y2 - y1)
+                self.critical_points['x_intercepts'].append((x_intercept, 0))
                 
-        return critical_points
+            # Y-intercept
+            if x1 * x2 <= 0:
+                y_intercept = y1 - x1 * (y2 - y1) / (x2 - x1)
+                self.critical_points['y_intercept'] = (0, y_intercept)
+        
+        # Find global minimum and maximum
+        y_coords = [p[1] for p in self.points]
+        min_idx = np.argmin(y_coords)
+        max_idx = np.argmax(y_coords)
+        self.critical_points['minimum'] = self.points[min_idx]
+        self.critical_points['maximum'] = self.points[max_idx]
+        
+    def create_interactive_plot(self):
+        """Create an interactive plot using Plotly"""
+        x_coords, y_coords = zip(*self.points)
+        
+        # Create a smoother curve for plotting
+        x_smooth = np.linspace(min(x_coords), max(x_coords), 1000)
+        y_smooth = self.spline_function(x_smooth)
+        
+        # Create the main function trace
+        fig = go.Figure()
+        
+        # Add the main function curve
+        fig.add_trace(go.Scatter(
+            x=x_smooth,
+            y=y_smooth,
+            mode='lines',
+            name='Function',
+            line=dict(color='rgb(0, 100, 255)', width=2)
+        ))
+        
+        # Add critical points
+        if self.critical_points:
+            # X-intercepts
+            if self.critical_points['x_intercepts']:
+                x_int, y_int = zip(*self.critical_points['x_intercepts'])
+                fig.add_trace(go.Scatter(
+                    x=x_int,
+                    y=y_int,
+                    mode='markers+text',
+                    name='X-intercepts',
+                    marker=dict(size=8, color='red'),
+                    text=[f'({x:.3f}, 0)' for x in x_int],
+                    textposition='top center'
+                ))
+            
+            # Y-intercept
+            if self.critical_points['y_intercept']:
+                x, y = self.critical_points['y_intercept']
+                fig.add_trace(go.Scatter(
+                    x=[x],
+                    y=[y],
+                    mode='markers+text',
+                    name='Y-intercept',
+                    marker=dict(size=8, color='green'),
+                    text=f'(0, {y:.3f})',
+                    textposition='top center'
+                ))
+            
+            # Minimum point
+            if self.critical_points['minimum']:
+                x, y = self.critical_points['minimum']
+                fig.add_trace(go.Scatter(
+                    x=[x],
+                    y=[y],
+                    mode='markers+text',
+                    name='Minimum',
+                    marker=dict(size=8, color='purple'),
+                    text=f'Min: ({x:.3f}, {y:.3f})',
+                    textposition='bottom center'
+                ))
+            
+            # Maximum point
+            if self.critical_points['maximum']:
+                x, y = self.critical_points['maximum']
+                fig.add_trace(go.Scatter(
+                    x=[x],
+                    y=[y],
+                    mode='markers+text',
+                    name='Maximum',
+                    marker=dict(size=8, color='orange'),
+                    text=f'Max: ({x:.3f}, {y:.3f})',
+                    textposition='top center'
+                ))
+        
+        # Update layout for better appearance
+        fig.update_layout(
+            title='Interactive Function Viewer',
+            plot_bgcolor='rgb(240, 240, 240)',
+            showlegend=True,
+            hovermode='closest',
+            xaxis=dict(
+                showgrid=True,
+                gridcolor='white',
+                gridwidth=1,
+                zeroline=True,
+                zerolinecolor='black',
+                zerolinewidth=2,
+                title='x'
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor='white',
+                gridwidth=1,
+                zeroline=True,
+                zerolinecolor='black',
+                zerolinewidth=2,
+                title='y'
+            )
+        )
+        
+        # Save to temporary HTML file and open in browser
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.html')
+        fig.write_html(temp_file.name)
+        webbrowser.open('file://' + temp_file.name)
+        
+        return fig
 
 def main():
-    # Create generator instance
-    generator = PointBasedFunctionGenerator()
-    
-    # Load points from your JSON file
-    generator.load_points_from_json('function_points_logarithmic_240001.json')
-    
-    # Generate and plot the function
-    generator.generate_function()
-    generator.plot_function(show_points=True)
-    
-    # Print critical points
-    critical_points = generator.get_critical_points()
-    if critical_points:
-        print("\nCritical Points:")
-        print(f"Y-intercept: {critical_points['y_intercept']:.6f}")
-        print(f"X-intercepts: {[f'{x:.6f}' for x in critical_points['x_intercepts']]}")
-        print("\nLocal Maxima:", [(f"{p[0]:.2f}", f"{p[1]:.2f}") for p in critical_points['local_maxima']])
-        print("Local Minima:", [(f"{p[0]:.2f}", f"{p[1]:.2f}") for p in critical_points['local_minima']])
-        
-    # Test some point evaluations
-    test_x = 2.5
-    print(f"\nValue at x={test_x}: {generator.evaluate_at(test_x):.6f}")
+    viewer = ModernFunctionViewer()
+    viewer.load_points_from_json('function_points_logarithmic_24001.json')
+    viewer.generate_function()
 
 if __name__ == "__main__":
     main()
